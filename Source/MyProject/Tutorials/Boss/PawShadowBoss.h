@@ -88,6 +88,10 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Boss|Mass")
     float ReconstructionThreshold = 6.0f;
 
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Boss|Mass",
+        meta = (ClampMin = "0.0"))
+    float BrawlerPhaseHealthBonus = 24.0f;
+
     UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Boss|Mass")
     float ReturnedMass = 0.0f;
 
@@ -104,7 +108,15 @@ public:
     bool IsStunned() const;
 
     UFUNCTION(BlueprintCallable, Category = "Boss")
-    void ChangeForm(EPawShadowForm NewForm, float NewMaxHealth);
+    void ChangeForm(EPawShadowForm NewForm);
+
+    // Health currently carried by this boss's loose fragments.
+    UFUNCTION(BlueprintPure, Category = "Boss|Mass")
+    float GetLooseFragmentHealth() const;
+
+    // All surviving health, wherever it is currently located.
+    UFUNCTION(BlueprintPure, Category = "Boss|Mass")
+    float GetTotalRemainingHealth() const;
 
     UFUNCTION(BlueprintCallable, Category = "Boss|Mass")
     bool BeginFragmentationCycle();

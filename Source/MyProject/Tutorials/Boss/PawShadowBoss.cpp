@@ -92,6 +92,12 @@ float APawShadowBoss::TakeDamage(
     {
         return 0.0f;
     }
+        // Core impacts must not remove health, including during stun.
+    // We will add the hit counter here in the next step.
+        if (Form == EPawShadowForm::Core)
+        {
+            return 0.0f;
+        }
 
     // Stunned enemies can still receive damage.
     const float AppliedDamage = FMath::Min(Health, DamageAmount);
@@ -125,25 +131,26 @@ float APawShadowBoss::TakeDamage(
     return AppliedDamage;
 }
 
-void APawShadowBoss::ChangeForm(
-    EPawShadowForm NewForm,
-    float NewMaxHealth
-)
+void APawShadowBoss::ChangeForm(EPawShadowForm NewForm)
 {
-    if (NewMaxHealth <= 0.0f || !FMath::IsFinite(NewMaxHealth))
+    // A visual/behavior change must not resurrect a defeated boss.
+    if (bDefeated)
     {
         return;
     }
 
+    if (Form == EPawShadowForm::Core
+        && NewForm == EPawShadowForm::Brawler
+        && LooseFragments.IsEmpty()
+        && IsValid(Encounter)
+        && Encounter->GetCurrentPhase() == EPawBossPhase::Fragmentation)
+    {
+        Health += BrawlerPhaseHealthBonus;
+    }
+
     Form = NewForm;
-    MaxHealth = NewMaxHealth;
-    Health = MaxHealth;
 
-    bDefeated = false;
-    StunEndTime = 0.0;
-
-    // Blueprint explicitly reactivates after the transformation is ready.
-    SetBossActive(false);
+    // Preserve health, activation, and any existing stun.
     OnFormChanged();
 }
 
@@ -166,14 +173,19 @@ bool APawShadowBoss::RegisterLooseFragment(
 {
     if (!IsValid(Fragment)
         || Fragment == this
+        || bDefeated
         || Mass <= 0.0f
         || !FMath::IsFinite(Mass)
-        || LooseFragments.Contains(Fragment))
+        || LooseFragments.Contains(Fragment)
+        || Mass > Health)
     {
         return false;
     }
 
+    // Transfer existing health from the body into this fragment.
     LooseFragments.Add(Fragment, Mass);
+    Health -= Mass;
+
     return true;
 }
 
@@ -194,16 +206,62 @@ bool APawShadowBoss::ResolveLooseFragment(
         return false;
     }
 
-    if (bReabsorbed)
-    {
-        ReturnedMass += *StoredMass;
-    }
-
-    // Both destruction and absorption resolve the loose fragment.
+    // Copy before removing the map entry.
+    const float FragmentHealth = *StoredMass;
     LooseFragments.Remove(Fragment);
 
+    if (bReabsorbed)
+    {
+        // Return only the health this fragment actually carried.
+        Health += FragmentHealth;
+        ReturnedMass += FragmentHealth;
+    }
+
+    // If destroyed, nothing is returned to the body.
+    // Removing the fragment therefore removes its health permanently.
+
+    const bool bAwaitingFormDecision =
+        Form == EPawShadowForm::Core
+        && IsValid(Encounter)
+        && Encounter->GetCurrentPhase() == EPawBossPhase::Fragmentation;
+
+    const bool bNowDefeated =
+        !bDefeated
+        && Health <= 0.0f
+        && LooseFragments.IsEmpty()
+        && !bAwaitingFormDecision;
+
+    if (bNowDefeated)
+    {
+        bDefeated = true;
+        SetBossActive(false);
+    }
+
     OnMassChanged();
+
+    if (bNowDefeated)
+    {
+        OnBossDefeated();
+    }
+
     return true;
+}
+
+float APawShadowBoss::GetLooseFragmentHealth() const
+{
+    float Total = 0.0f;
+
+    for (const auto& Entry : LooseFragments)
+    {
+        Total += Entry.Value;
+    }
+
+    return Total;
+}
+
+float APawShadowBoss::GetTotalRemainingHealth() const
+{
+    return Health + GetLooseFragmentHealth();
 }
 
 bool APawShadowBoss::CanReconstruct() const
